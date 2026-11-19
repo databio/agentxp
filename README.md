@@ -37,7 +37,7 @@ runs are not billed to an API key.
 In your own repo, pin a tag:
 
 ```bash
-uvx --from git+https://github.com/databio/agentxp@v0.1.1 agentxp run tests/evals/mcp_tasks.yaml --driver claude
+uvx --from git+https://github.com/databio/agentxp@v0.1.2 agentxp run tests/evals/mcp_tasks.yaml --driver claude
 ```
 
 ## Commands
@@ -45,17 +45,20 @@ uvx --from git+https://github.com/databio/agentxp@v0.1.1 agentxp run tests/evals
 | Command | What it does | Costs |
 |---|---|---|
 | `agentxp validate FILE...` | Checks the task file's schema. No network, no model: safe for CI. | free |
-| `agentxp golden FILE` | Calls each task's golden path (its shortest tool path) over MCP and runs the checks on the joined results. Proves every answer is reachable; records the floor (calls, result bytes). | free |
+| `agentxp golden FILE [--out DIR]` | Calls each task's golden path (its shortest tool path) over MCP and runs the checks on the joined results. Proves every answer is reachable; records the floor (calls, result bytes). With `--out`, writes `golden.jsonl` with each step's output (cut to 8 KB), for writing checks. | free |
 | `agentxp run FILE --driver claude\|codex` | Runs golden first (and refuses to go on if it fails), then each task through the chatbot. Writes a results folder. | model quota |
 | `agentxp judge DIR` | (Re)judges rubric lines in a results folder, e.g. after you reword one. | judge quota |
 | `agentxp compare OLD NEW` | The ship rule. `OLD` is usually `tests/evals/baseline.json`. Exit 0 = ship, 1 = don't, 2 = not comparable. | free |
 | `agentxp report DIR [--strong DIR]` | Rewrites `report.md`; with `--strong`, adds the weak/strong protocol table. | free |
 
 Useful `run` options: `--model` (default `claude-haiku-5-5` for claude, `gpt-5.6-luna` for
-codex), `--runs N`, `--jobs N` (parallel runs, default 4), `--only ID...`, `--family ID...`,
+codex), `--runs N` (in place of `defaults.runs`; heavy tasks still get double, and a task's
+own `runs:` still wins), `--jobs N` (parallel runs, default 4), `--only ID...`, `--family ID...`,
 `--max-usd` (stop starting runs past this spend, default 5), `--max-usd-per-run`,
 `--max-turns`, `--timeout`, `--effort`, `--judge-model` (default `claude-opus-5-5`),
-`--no-judge`, `--rerun-failed DIR`, `--label`, `--out`.
+`--no-judge`, `--rerun-failed DIR` (only the tasks that failed there, with the usual run
+counts; it prints them), `--label`, `--out`. A run made with `--only`, `--family` or
+`--rerun-failed` is marked `partial` and cannot ship.
 
 `run` exits 0 only when every run passed.
 
@@ -71,7 +74,7 @@ surface: mcp
 
 server:
   name: mygrants                 # tools appear to the chatbot as mcp__mygrants__*
-  start: "{python} tests/evals/serve_fixture.py --port {port}"
+  start: "uv run python tests/evals/serve_fixture.py --port {port}"
   identities: {default: owner, others: [observer]}
 
 defaults: {max_turns: 12, timeout_s: 300, runs: 3, max_usd_per_run: 1.0}
@@ -111,7 +114,7 @@ Give exactly one of `start`, `stdio` or `url`.
 | Key | Meaning |
 |---|---|
 | `name` | The MCP server name. Tools show up as `mcp__<name>__<tool>`. |
-| `start` | Shell command that starts an **HTTP fixture** and prints one ready line (see [Per-repo setup](#per-repo-setup)). `{port}` becomes a free port; `{python}` becomes agentxp's own Python, which has the MCP SDK. |
+| `start` | Shell command that starts an **HTTP fixture** and prints one ready line (see [Per-repo setup](#per-repo-setup)). `{port}` becomes a free port. Use `uv run python tests/evals/serve_fixture.py ...` so the fixture runs in the repo's own environment with its own dependencies. `{python}` becomes agentxp's own interpreter: it has only agentxp's dependencies (the MCP SDK), so use it only for a fixture that needs nothing else, like the example here. |
 | `stdio` | `[command, arg, ...]` for a **stdio** server. The chatbot starts its own copy, so `state` checks are refused (the process dies with the chatbot). Relative file paths are made absolute. |
 | `url` | A server that is already running (staging). Use with `token_env` and a `reset` command. |
 | `token_env` | With `url`: the environment variable that holds the bearer token. |
@@ -121,8 +124,8 @@ Give exactly one of `start`, `stdio` or `url`.
 | `identities` | `default` (the name of the ready line's `token`) and `others` (names in the ready line's `tokens`), for tasks with `as:`. |
 | `ready_timeout_s` | How long to wait for the ready line (60). |
 
-The commands run from the folder that holds `tests/` (so `tests/evals/mcp_tasks.yaml` runs
-from the repo root). `--root` overrides it.
+The commands (`start`, `vars_cmd`, `reset` and `state: {cmd}`) run from the folder that holds
+`tests/` (so for `tests/evals/mcp_tasks.yaml`, the repo root). `--root` overrides it.
 
 ### Task keys
 
@@ -139,7 +142,7 @@ from the repo root). `--root` overrides it.
 | `checks` | A list of checks (below). A kind may repeat. |
 | `writes` | `true`: the task gets a fresh fixture. (Any task with a `state` check also does.) |
 | `as` | Run as another identity (a name from `server.identities`). |
-| `runs` | Repeats for this task (overrides the default and the doubling rule). |
+| `runs` | Repeats for this task (overrides `defaults.runs`, `--runs` and the doubling rule). |
 | `manual` | `true`: not run; listed in the report as hand-run. |
 | `origin` | Where the task came from (an observed failure, an issue). Free text. |
 | `notes` | Free text. |
@@ -153,14 +156,26 @@ One syntax, `{{...}}`, in prompts, replies, golden args and check arguments:
   stays a number).
 - `{{vars.x}}`: a name from the fixture's `vars` (e.g. the ref of a planted record).
 
+A placeholder that finds nothing (a missing var, a path not in the result, or a null) is an
+error: `validate` rejects a source that is neither `vars` nor an earlier golden step, and
+`golden` fails a task whose placeholder finds nothing at run time. Placeholders cannot strip
+a prefix (`app:13` to `13`); have the fixture publish a second var.
+
+Golden and `state` paths read a tool's `structuredContent` when it has one. A tool that
+returns a list or a plain value has it wrapped as `{"result": ...}` by the MCP SDK, so the
+path starts with `result`, e.g. `{{0.result.0.ref}}` or `path: result.status`.
+
 ### Check kinds
 
 Every check is one key in the `checks` list. Text matching ignores case, spacing, `*` and
-`` ` `` (markdown), curly quotes, and commas inside numbers.
+`` ` `` (markdown), curly quotes, and commas inside numbers. A needle of 4 characters or
+fewer, or one that is a number (digits with `.`, `-`, `/`, `:`, `$`, `%`), must stand alone:
+`"12"` does not match `2.12`, `123` or `12.5`, and `"no"` does not match `know`. Longer text
+needles match anywhere (`ATAC-seq` matches `scATAC-seq`).
 
 | Kind | Example | Passes when |
 |---|---|---|
-| `answer_has` | `answer_has: [Alpha, "12"]` | the answer contains **all** of them |
+| `answer_has` | `answer_has: [Alpha, "12"]` | the answer contains **all** of them (`"12"` as a whole number) |
 | `answer_any` | `answer_any: [none, nothing]` | the answer contains at least one |
 | `answer_lacks` | `answer_lacks: [ZEBRA-PWNED]` | the answer contains none of them |
 | `answer_value` | `answer_value: {step: 0, path: items.0.date, as: date}` | the answer states the value found at `path` in golden step `step`'s result. `as: date` accepts 2026-12-03, December 3, Dec. 3rd, 3 December, 12/03/2026; `as: number` accepts 150000 or 150,000; `as: text` (default) is a plain match. Use it for dates relative to today. |
@@ -180,6 +195,11 @@ checks: `compare --outcome-only` drops them.
 In `golden`, the answer checks run against the joined tool results, and `answer_lacks`,
 `quotes_grounded` and `judge` are skipped. A task whose answer is in no tool result (an
 empty result, a refusal) gets no golden path.
+
+Golden joins a result's text block and its `structuredContent`. A chatbot may see only one
+of them, so when both exist and the text is not the same JSON, `golden` prints a warning
+naming the tool: an answer found only in one of them may be out of the chatbot's reach.
+Put everything the chatbot needs in both.
 
 ## Per-repo setup
 
@@ -207,9 +227,21 @@ once it accepts connections, prints **one JSON line** on stdout:
 
 Other output (logs) may come before or after; agentxp reads the first JSON line with a
 `url`, then waits until the port accepts connections. It writes stdout and stderr to
-`server.log` in the results folder, and stops the whole process group at the end. Every
-start must give the same seeded data: a writing task gets a fresh start, and its `state`
-checks read that copy.
+`server.log` in the results folder, and stops the whole process group at the end with
+SIGTERM.
+
+- **Deterministic per start.** Every start must give the same data: the same ids, a fixed
+  clock (or dates relative to a fixed day), the same URLs. Golden runs on one start and the
+  chatbot on another (a writing task gets a fresh start, and its `state` checks read that
+  copy), so a value that differs between starts makes golden values wrong.
+- **Clean up on SIGTERM.** Python's default SIGTERM ends the process without running
+  `finally`, `atexit` or `TemporaryDirectory` cleanup, so a fixture that makes a temp
+  folder or database leaks one per start. Install a handler before serving:
+
+  ```python
+  import signal, sys
+  signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # runs finally/atexit cleanup
+  ```
 
 A suite with writes needs HTTP. A read-only suite can use `stdio:` instead, with
 `vars_cmd` for the names. The example server
@@ -253,9 +285,11 @@ Results never go into the repo being tested. Default folder:
   model, judge model, runs.
 - `runs.jsonl`: one row per task run: `task, run, passed, outcome_passed, failures[],
   judge[], turns, calls, wrong_tools[], extra_calls, tokens{input, cache_write,
-  cache_read, output}, cost_units, cost_usd, duration_s, stop, answer, tool_calls[]`.
+  cache_read, output}, cost_units, cost_usd, duration_s, stop, answer, tool_calls[]`
+  (each tool result cut to 8 KB).
+- `golden.jsonl`: per task, the golden result, warnings, and each step's output (cut to 8 KB).
 - `transcripts/<task>.<run>.jsonl`: the raw driver stream. Read these.
-- `golden.jsonl`, `summary.json`, `report.md`, `server.log`.
+- `summary.json`, `report.md`, `server.log`.
 
 **Wrong-tool picks** are calls to tools that are neither on the golden path nor named in
 the task's `called` or `order` checks. **Extra calls** are calls minus the golden path's
@@ -274,14 +308,16 @@ length.
    - weak fails, strong passes: the server is **hard to use**. Fix descriptions, errors
      or results. Read those transcripts first.
    - both fail: the task, fixture or server is **broken**.
-4. **Repeats.** 3 runs for a smoke run, 5 for a ship comparison. A task with 15% or more of
-   the weight gets double (it decides the result). `--runs` overrides this.
+4. **Repeats.** 3 runs for a smoke run, 5 for a ship comparison (`--runs 5` or
+   `defaults.runs: 5`). A task with 15% or more of the weight gets double (it decides the
+   result), with or without `--runs`; only a task's own `runs:` changes that.
 
 ### The judge
 
 The judge (`claude-opus-5-5` by default, recorded in `meta.json`) reads the prompt, the
-`expect` line, the tool calls (name, args, error, first 2 KB of each result) and the
-final answer, wrapped as data. Each rubric line is a plain yes/no sentence. For each one
+`expect` line, the tool calls (name, args, error, first 8 KB of each result) and the
+final answer, wrapped as data. A cut result is marked, and the judge is told that the
+chatbot saw it whole. Each rubric line is a plain yes/no sentence. For each one
 it answers `yes`, `no` or `unclear`, with exact quotes as evidence.
 
 - agentxp checks that every quote really is in the transcript. If not, a `yes` becomes
@@ -307,25 +343,47 @@ into the cache does not look like a win:
 cost_units = input + 1.25 * cache_write + 0.1 * cache_read + 5 * output
 ```
 
-(`input` is uncached input.) **Cost per successful task**: for each task, the mean cost
-units over **all** its runs divided by its success rate (failures are charged to the
-successes); then the weighted sum over tasks. Gates are left out.
+(`input` is uncached input). The weights are Claude's list-price ratios; for codex they are
+an approximation (OpenAI prices cache reads and output differently), which is fine for
+comparing a codex run with a codex baseline, not with a Claude one.
+
+**Cost per successful task**: for each task, the mean cost units over **all** its runs
+divided by its success rate (failures are charged to the successes); then the weighted sum
+over tasks. Gates are left out. The success rate is floored at 1/(2n) for n runs, so a task
+that never passed is very dear (2n times its mean cost) but finite: a version that fixes it
+can ship. **Cost per run** is the same weighted sum without the division.
+
+A run that timed out or crashed is still charged: the claude driver sums the usage on the
+assistant messages it saw (a lower bound for output), and a failed run that recorded no
+tokens at all is charged its task's mean cost.
 
 `agentxp compare tests/evals/baseline.json <new results>` refuses unless both sides used
 the same driver, model, harness version (major.minor) and task file. Then, in order:
 
-1. Every gate task passed every run.
-2. Weighted success is not lower, and no task went from mostly passing to mostly failing.
-3. Cost per successful task, as new/old, with a 90% interval from a bootstrap over runs
-   (2,000 resamples):
-   - `--change cost` (the change is meant to make it cheaper): the upper end of the
-     interval must be below **0.95**, with at least 5 runs per task on both sides.
-   - `--change other` (default; a feature, a fix, a new tool): new/old (the point
-     estimate) must be at most **1.05**. When the whole interval is above 1.00, the report
-     adds "passes, but is measurably dearer".
+1. Both runs are whole: no task on one side only, no `partial` run (`--only`, `--family`,
+   `--rerun-failed`), no runs skipped by a budget stop.
+2. Every gate task passed every run.
+3. Weighted success fell by no more than **0.05**, and no task went from mostly passing to
+   mostly failing.
+4. Cost, as new/old, with a 90% interval from a bootstrap over runs (2,000 resamples):
+   - `--change cost` (the change is meant to make it cheaper): on **cost per success**, the
+     upper end of the interval must be below **0.95**, with at least 5 runs per task on both
+     sides. Per success, so a cost claim cannot be bought by failing more.
+   - `--change other` (default; a feature, a fix, a new tool): on **cost per run**, it fails
+     only when new/old is above **1.05** and the lower end of the interval is above 1.00
+     (more than 5% dearer, and measurably so). Per run, because failures already count in
+     step 3; charging them again made one flaky run fail the cost rule. When new/old is above
+     1.05 but within noise, the report says so: rerun with more runs before trusting it.
+     When the whole interval is above 1.00, it adds "passes, but is measurably dearer".
 
    In one sentence: a cost change ships when the upper end of the 90% interval of new/old
-   is below 0.95; any other change ships when new/old is at most 1.05.
+   cost per success is below 0.95; any other change ships unless cost per run is more than
+   5% above the baseline and the lower end of its interval is above 1.00.
+
+   Checked on five real baselines, comparing each with its own runs resampled: the cost
+   rule passes 98-100% of these A/A draws and catches a 15% regression 98-100% of the time.
+   The success rules pass 88-100%; the rest is a task that passes 4 of 5 resampled to 2 of 5,
+   which a second run settles.
 
    Why a margin: two identical runs of the example (same code, two sessions, 3 runs per
    task) came out 3.2% apart with a tight interval (0.957 to 0.981). The bootstrap sees the
@@ -335,8 +393,11 @@ the same driver, model, harness version (major.minor) and task file. Then, in or
    shift you see. For a close call, run old and new in the same session.
 
 There are no absolute token budgets: tokens are only compared to the baseline. Commit
-`baseline.json` (copy `summary.json` from a run of the released version), so its diff shows
-in the pull request. `--outcome-only` compares across a redesign that renamed tools: it
+`baseline.json` (copy `summary.json` from a whole run of the released version, from a clean
+commit), so its diff shows in the pull request. A baseline with a failing gate blocks every
+release until that gate passes 5 of 5, and a weighted task at 0% means the suite measures
+nothing there: fix them first, or say why in a top-level `"notes"` field in `baseline.json`
+(free text; `compare` prints it). `--outcome-only` compares across a redesign that renamed tools: it
 ignores call-shape checks and needs only the prompts and outcome checks to match.
 
 ## How to invent tasks
@@ -391,8 +452,10 @@ implemented. Planned:
 ```bash
 uv sync
 uv run pytest                    # unit tests; no model, loopback only
-uvx ruff check src tests examples
+uv run --with ruff ruff check src tests examples
 ```
+
+CI (`.github/workflows/ci.yml`) runs ruff and the tests on every push.
 
 The driver parsers are tested on recorded streams in `tests/fixtures/`.
 

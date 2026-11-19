@@ -18,6 +18,7 @@ import contextvars
 import copy
 import json
 import secrets
+import signal
 import socket
 import sys
 
@@ -164,6 +165,9 @@ def main() -> None:
     p.add_argument("--vars", action="store_true")
     p.add_argument("--port", type=int, default=0)
     args = p.parse_args()
+    # agentxp stops a fixture with SIGTERM. Exit cleanly so `finally` blocks, atexit and
+    # TemporaryDirectory cleanup run (by default SIGTERM kills Python with no cleanup at all).
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     reset()
     if args.vars:
         print(json.dumps({"vars": VARS}))

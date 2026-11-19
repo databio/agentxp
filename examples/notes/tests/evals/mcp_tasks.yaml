@@ -7,7 +7,8 @@ surface: mcp
 
 server:
   name: notes                         # tools appear to the chatbot as mcp__notes__*
-  # {python} is agentxp's own interpreter (it has the MCP SDK); {port} is a free port.
+  # {python} is agentxp's own interpreter (it has the MCP SDK, all this server needs); {port} is a
+  # free port. A real repo's fixture needs its own deps: use "uv run python tests/evals/serve_fixture.py".
   # The command runs from examples/notes/ (the folder holding tests/) and prints one ready line.
   start: "{python} notes_server.py --port {port}"
   identities: {default: owner, others: [observer]}
