@@ -1,6 +1,6 @@
 [project]
 name = "agentxp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Measure how well AI chatbots do real tasks through a tool surface (MCP server today)."
 readme = "README.md"
 requires-python = ">=3.11"
