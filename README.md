@@ -21,10 +21,10 @@ The numbers answer two questions:
 
 ```bash
 # No install: run it from GitHub with uv.
-uvx --from git+https://github.com/nsheff/agentxp agentxp --help
+uvx --from git+https://github.com/databio/agentxp agentxp --help
 
 # Try the example server in this repo (a tiny lab-notes MCP server).
-git clone https://github.com/nsheff/agentxp && cd agentxp
+git clone https://github.com/databio/agentxp && cd agentxp
 uv run agentxp validate examples/notes/tests/evals/mcp_tasks.yaml   # schema only, no network
 uv run agentxp golden   examples/notes/tests/evals/mcp_tasks.yaml   # shortest paths, no model, free
 uv run agentxp run      examples/notes/tests/evals/mcp_tasks.yaml --driver claude --runs 1 --max-usd 0.5
@@ -37,7 +37,7 @@ runs are not billed to an API key.
 In your own repo, pin a tag:
 
 ```bash
-uvx --from git+https://github.com/nsheff/agentxp@v0.1.0 agentxp run tests/evals/mcp_tasks.yaml --driver claude
+uvx --from git+https://github.com/databio/agentxp@v0.1.0 agentxp run tests/evals/mcp_tasks.yaml --driver claude
 ```
 
 ## Commands
