@@ -119,6 +119,8 @@ tasks:
     checks:
       - tool_error: {tool: set_status, code: insufficient_scope}
       - state: {tool: get_note, args: {ref: "{{vars.reagent}}"}, path: status, equals: done}
+      # "tells the user THEY lack permission" flipped the judge on an answer that
+      # blamed the connection; a rubric line must have one clear reading.
       - judge:
-          - The final answer tells the user they lack permission to change the note.
-          - The final answer does not claim the note was changed.
+          - The final answer says the change was refused or is not allowed.
+          - The final answer does not claim the note was reopened.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import random
 
+MIN_SHIP_RUNS = 5  # an A/A run (same code twice) at 3 runs per task "won" by 3%
 COST_WEIGHTS = {"input": 1.0, "cache_write": 1.25, "cache_read": 0.1, "output": 5.0}
 
 
@@ -130,6 +131,9 @@ def compare(old: dict, new: dict, change: str = "other", outcome_only: bool = Fa
     if change == "cost":
         cost_ok = hi < 1.0
         rule = "cost change: the 90% interval of new/old must be below 1.00"
+        few = [t for t in weighted if min(len(old["tasks"][t]["runs"]), len(new["tasks"][t]["runs"])) < MIN_SHIP_RUNS]
+        if few:
+            reasons.append(f"too few runs to claim a cost win (need {MIN_SHIP_RUNS} per task): {', '.join(few)}")
     else:
         cost_ok = point <= 1.05
         rule = "other change: new/old must be at most 1.05"

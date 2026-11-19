@@ -104,7 +104,8 @@ def cmd_judge(args) -> int:
     meta, rows, _ = report.load_dir(out)
     spec = _load(args.tasks or meta["tasks_file"])
     tasks = {t["id"]: t for t in spec["tasks"]}
-    meta["judge_model"] = args.judge_model
+    meta.update(specs.hashes(spec), judge_model=args.judge_model, tasks_file=spec["_path"],
+                rejudged=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     for r in rows:
         task = tasks.get(r["task"])
         if r.get("skipped") or task is None or not rubric(task):

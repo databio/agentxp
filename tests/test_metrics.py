@@ -51,6 +51,13 @@ def test_cost_change_must_beat_the_old():
     assert not same["ship"]  # equal is not a win
 
 
+def test_cost_win_needs_five_runs():
+    old = {"a": [(True, 1000)] * 3}
+    new = {"a": [(True, 500)] * 3}
+    res = metrics.compare(summary(old), summary(new), change="cost")
+    assert not res["ship"] and any("too few runs" in r for r in res["reasons"])
+
+
 def test_noisy_gain_does_not_count_as_a_cost_win():
     old = {"a": [(True, c) for c in (200, 2000, 300, 1800, 900)]}
     new = {"a": [(True, c) for c in (150, 1900, 280, 1700, 800)]}  # 7% cheaper, very noisy

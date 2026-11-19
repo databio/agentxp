@@ -17,8 +17,8 @@ def fake(verdicts, cost=0.01):
 def test_ungrounded_yes_becomes_unclear(monkeypatch, tmp_path):
     monkeypatch.setattr(judge, "CACHE", tmp_path)
     monkeypatch.setattr(judge, "run_cli", fake([
-        {"criterion": 1, "verdict": "yes", "evidence": "There are 42 boxes"},
-        {"criterion": 2, "verdict": "yes", "evidence": "words never said"},
+        {"criterion": 1, "verdict": "yes", "quotes": ["There are 42 boxes", "holds 42 boxes"], "reason": "r"},
+        {"criterion": 2, "verdict": "yes", "quotes": ["There are 42 boxes", "words never said"], "reason": "r"},
     ]))
     verdicts, cost = judge.judge(TASK, "p", CALLS, "There are 42 boxes in freezer B.", "opus")
     assert [v["verdict"] for v in verdicts] == ["yes", "unclear"] and cost == 0.01
@@ -26,7 +26,7 @@ def test_ungrounded_yes_becomes_unclear(monkeypatch, tmp_path):
 
 def test_missing_criterion_is_unclear_and_cache_hits(monkeypatch, tmp_path):
     monkeypatch.setattr(judge, "CACHE", tmp_path)
-    monkeypatch.setattr(judge, "run_cli", fake([{"criterion": 1, "verdict": "no", "evidence": ""}]))
+    monkeypatch.setattr(judge, "run_cli", fake([{"criterion": 1, "verdict": "no", "quotes": [], "reason": "r"}]))
     first, _ = judge.judge(TASK, "p", CALLS, "answer", "opus")
     assert [v["verdict"] for v in first] == ["no", "unclear"]
     monkeypatch.setattr(judge, "run_cli", lambda *a, **k: (_ for _ in ()).throw(AssertionError("not cached")))
