@@ -149,6 +149,9 @@ def validate(spec: dict) -> tuple[list[str], list[str]]:
             for ref in _placeholder_refs(step.get("args")):
                 if ref.isdigit() and int(ref) >= i:
                     err.append(f"{where}: golden step {i} uses {{{{{ref}.…}}}} from a later step")
+        for ref in _placeholder_refs([t.get("prompt"), t.get("replies"), t.get("checks"), golden]):
+            if ref != "vars" and not (ref.isdigit() and int(ref) < len(golden)):
+                err.append(f"{where}: placeholder {{{{{ref}.…}}}} names no golden step and is not vars")
         if not isinstance(t.get("checks", []), list):
             err.append(f"{where}: checks must be a list")
             continue
@@ -251,22 +254,31 @@ def dig(obj: Any, path: str) -> Any:
     return obj
 
 
-def fill(value: Any, outputs: list[Any] | None = None, vars: dict | None = None) -> Any:
+class PlaceholderError(ValueError):
+    pass
+
+
+def fill(value: Any, outputs: list[Any] | None = None, vars: dict | None = None, strict: bool = True) -> Any:
     """Replace ``{{N.path}}`` (golden step N's output) and ``{{vars.x}}`` (fixture vars).
-    A string that is only a placeholder keeps the value's type."""
+    A string that is only a placeholder keeps the value's type. A placeholder that finds
+    nothing (missing or null) raises PlaceholderError; ``strict=False`` leaves it as is."""
     if isinstance(value, dict):
-        return {k: fill(v, outputs, vars) for k, v in value.items()}
+        return {k: fill(v, outputs, vars, strict) for k, v in value.items()}
     if isinstance(value, list):
-        return [fill(v, outputs, vars) for v in value]
+        return [fill(v, outputs, vars, strict) for v in value]
     if not isinstance(value, str) or "{{" not in value:
         return value
 
     def look(src: str, path: str) -> Any:
+        got = None
         if src == "vars":
-            return dig(vars or {}, path)
-        if src.isdigit() and outputs is not None and int(src) < len(outputs):
-            return dig(outputs[int(src)], path)
-        return None
+            got = dig(vars or {}, path)
+        elif src.isdigit() and outputs is not None and int(src) < len(outputs):
+            got = dig(outputs[int(src)], path)
+        if got is None and strict:
+            where = "the fixture's vars" if src == "vars" else f"golden step {src}'s result"
+            raise PlaceholderError(f"{{{{{src}.{path}}}}} found nothing in {where}")
+        return got
 
     whole = PLACEHOLDER.fullmatch(value.strip())
     if whole:

@@ -98,13 +98,14 @@ def render_compare(old: dict, new: dict, res: dict) -> str:
     out = [
         f"# Ship rule: {'SHIP' if res['ship'] else 'DO NOT SHIP'}", "",
         f"{res['rule']}.", "",
-        f"- Cost per success new/old: **{res['ratio']:.3f}** (90% interval {lo:.3f} to {hi:.3f})",
+        f"- {res['measure'].capitalize()} new/old: **{res['ratio']:.3f}** (90% interval {lo:.3f} to {hi:.3f})",
+        f"- Cost per success new/old: {res['cps_ratio']:.3f}",
         f"- Weighted success: {res['weighted_success']['old']:.3f} -> {res['weighted_success']['new']:.3f}",
     ]
     out += [f"- {r}" for r in res["reasons"]]
     out += [f"- Note: {n}" for n in res.get("notes", [])]
-    if res["missing"]:
-        out.append(f"- Only on one side (ignored): {', '.join(res['missing'])}")
+    if old.get("notes"):
+        out.append(f"- Baseline note: {old['notes']}")
     out += ["", "| task | old success | new success | old cost/success | new cost/success |",
             "|---|---|---|---|---|"]
     for t, v in res["tasks"].items():

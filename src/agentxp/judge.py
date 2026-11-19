@@ -20,6 +20,7 @@ from .checks import norm
 from .drivers import run_cli
 from .drivers.claude import STRIP_ENV
 from .spec import checks_of
+from .surfaces.mcp import RESULT_KEEP
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "agentxp" / "judge"
 SYSTEM = (
@@ -47,10 +48,20 @@ def rubric(task: dict) -> list[str]:
     return lines
 
 
+def was_cut(call: dict) -> bool:
+    text = call["text"]
+    return len(text) > RESULT_KEEP or call.get("bytes", 0) > len(text.encode())
+
+
 def transcript_view(prompt: str, expect: str | None, calls: list[dict], answer: str) -> str:
-    shown = [{"tool": c["tool"], "args": c["args"], "error": c["error"], "result": c["text"][:2048]}
-             for c in calls]
-    return (f"<data>\n<user_prompt>\n{prompt}\n</user_prompt>\n"
+    shown = [{"tool": c["tool"], "args": c["args"], "error": c["error"],
+              "result": c["text"][:RESULT_KEEP] + (f" [CUT: the full result was {c.get('bytes')} bytes]"
+                                                   if was_cut(c) else "")} for c in calls]
+    cut = sum(was_cut(c) for c in calls)
+    note = (f"<note>{cut} tool result(s) are cut to their first {RESULT_KEEP} characters, marked [CUT]. The "
+            "chatbot saw them whole: text missing from a cut result is not evidence that it was not there."
+            "</note>\n") if cut else ""
+    return (f"{note}<data>\n<user_prompt>\n{prompt}\n</user_prompt>\n"
             f"<expected>\n{expect or '(none given)'}\n</expected>\n"
             f"<tool_calls>\n{json.dumps(shown, ensure_ascii=False, indent=1)}\n</tool_calls>\n"
             f"<final_answer>\n{answer}\n</final_answer>\n</data>")

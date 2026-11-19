@@ -18,6 +18,11 @@ def test_golden_http_fixture(capsys):
     assert "mark-done: PASS" in out and "observer-cannot-edit: PASS" in out
 
 
+def test_golden_writes_outputs(tmp_path, capsys):
+    assert main(["golden", str(EXAMPLE / "mcp_tasks.yaml"), "--only", "freezer-count", "--out", str(tmp_path)]) == 0
+    assert "42 boxes" in (tmp_path / "golden.jsonl").read_text()
+
+
 def test_golden_stdio(capsys):
     assert main(["golden", str(EXAMPLE / "mcp_tasks_stdio.yaml")]) == 0
     assert "freezer-contact: PASS calls=1" in capsys.readouterr().out

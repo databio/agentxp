@@ -83,7 +83,11 @@ def test_fill_placeholders():
     assert specs.fill("{{0.items.0.n}}", outs) == 3  # keeps type when whole
     assert specs.fill("ref {{0.items.0.ref}}!", outs) == "ref a:1!"
     assert specs.fill({"x": ["{{vars.k}}"]}, outs, {"k": "v"}) == {"x": ["v"]}
-    assert specs.fill("{{vars.missing}}", outs, {}) == "{{vars.missing}}"
+    with pytest.raises(specs.PlaceholderError, match="vars.missing"):
+        specs.fill("ask about {{vars.missing}}", outs, {})
+    with pytest.raises(specs.PlaceholderError, match="golden step 0"):
+        specs.fill("{{0.items.9.ref}}", outs)
+    assert specs.fill("{{vars.missing}}", outs, {}, strict=False) == "{{vars.missing}}"
     assert specs.dig({"a": [1, {"b": 2}]}, "a.1.b") == 2 and specs.dig({"a": []}, "a.5") is None
 
 
@@ -96,3 +100,11 @@ def test_outcome_hash_ignores_call_shape_checks():
     assert h0["outcome_hash"] == h1["outcome_hash"] and h0["tasks_hash"] != h1["tasks_hash"]
     s["tasks"][0]["prompt"] = "changed"
     assert specs.hashes(s)["outcome_hash"] != h0["outcome_hash"]
+
+
+def test_validate_flags_placeholders_with_no_source():
+    s = copy.deepcopy(BASE)
+    s["tasks"][0]["prompt"] = "about {{1.ref}} and {{vars.x}} and {{foo.bar}}"
+    errors, _ = specs.validate(s)
+    msgs = " ".join(errors)
+    assert "{{1.…}}" in msgs and "{{foo.…}}" in msgs and "{{vars.…}}" not in msgs

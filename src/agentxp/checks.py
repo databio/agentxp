@@ -66,6 +66,24 @@ def value_patterns(value: Any, kind: str) -> list[str]:
     return [re.escape(norm(value))]
 
 
+def needle_pattern(needle: str) -> str:
+    """A cleaned needle as a regex. Short (4 chars or fewer) or numeric needles must stand
+    alone: "12" does not match "2.12" or "123", "no" does not match "know"."""
+    n = clean_answer(needle)
+    pat = re.escape(n)
+    if len(n) > 4 and not re.fullmatch(r"[\d.\s$%/:+-]+", n):
+        return pat
+    if n[:1].isalnum():
+        pat = r"(?<![\w.])" + pat if n[0].isdigit() else r"(?<!\w)" + pat
+    if n[-1:].isalnum():
+        pat += r"(?!\.?\d)(?!\w)" if n[-1].isdigit() else r"(?!\w)"
+    return pat
+
+
+def has(needle: str, hay: str) -> bool:
+    return bool(re.search(needle_pattern(needle), hay))
+
+
 def clean_answer(answer: str) -> str:
     s = re.sub(r"(?<=\d),(?=\d{3})", "", norm(answer))
     s = re.sub(r"(\d)(?:st|nd|rd|th)\b", r"\1", s)
@@ -97,6 +115,7 @@ def run_checks(
     read_state: Callable[[str, dict], dict] | None,
     state_env: dict | None = None,
     mode: str = "run",
+    cwd: str | os.PathLike | None = None,
 ) -> list[dict]:
     """Failures as ``{"kind", "msg"}``; judge checks are left to the judge."""
     fails: list[dict] = []
@@ -110,19 +129,19 @@ def run_checks(
 
     for check in task.get("checks") or []:
         (kind, arg), = check.items()
+        arg = fill(arg, golden, vars)  # first, so golden also catches a placeholder that finds nothing
         if mode == "golden" and kind in GOLDEN_SKIPS or kind == "judge":
             continue
-        arg = fill(arg, golden, vars)
         if kind == "answer_has":
             for s in arg:
-                if clean_answer(s) not in hay:
+                if not has(s, hay):
                     f(kind, f"answer lacks {s!r}")
         elif kind == "answer_any":
-            if not any(clean_answer(s) in hay for s in arg):
+            if not any(has(s, hay) for s in arg):
                 f(kind, f"answer has none of {arg}")
         elif kind == "answer_lacks":
             for s in arg:
-                if clean_answer(s) in hay:
+                if has(s, hay):
                     f(kind, f"answer has {s!r}")
         elif kind == "answer_value":
             want = dig((golden or [None] * (arg["step"] + 1))[arg["step"]], arg["path"])
@@ -170,13 +189,13 @@ def run_checks(
                        for c in hit):
                 f(kind, f"no {arg['tool']} call failed with {code or 'an error'}")
         elif kind == "state":
-            fails += [{"kind": kind, "msg": m} for m in check_state(arg, read_state, state_env)]
+            fails += [{"kind": kind, "msg": m} for m in check_state(arg, read_state, state_env, cwd)]
     return fails
 
 
-def check_state(arg: dict, read_state, env: dict | None) -> list[str]:
-    if "cmd" in arg:
-        r = subprocess.run(arg["cmd"], shell=True, env={**os.environ, **(env or {})},
+def check_state(arg: dict, read_state, env: dict | None, cwd=None) -> list[str]:
+    if "cmd" in arg:  # runs where server.start runs: the folder holding tests/
+        r = subprocess.run(arg["cmd"], shell=True, cwd=cwd, env={**os.environ, **(env or {})},
                            capture_output=True, text=True, timeout=120)
         want = arg.get("exit", 0)
         if r.returncode != want:

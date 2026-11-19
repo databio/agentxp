@@ -7,6 +7,8 @@ import json
 from ..surfaces.mcp import make_call
 from . import NEUTRAL_PROMPT, Driver, empty_episode, run_cli
 
+USAGE_KEYS = (("input", "input_tokens"), ("cache_write", "cache_creation_input_tokens"),
+              ("cache_read", "cache_read_input_tokens"), ("output", "output_tokens"))
 STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")  # bill the subscription, not an API key
 
 
@@ -49,6 +51,7 @@ def parse(lines: list[str], server: str) -> dict:
     prefix = f"mcp__{server}__"
     pending: dict[str, dict] = {}
     final: dict = {}
+    seen: dict[str, dict] = {}  # usage per assistant message id, for a run cut off before its result
     for line in lines:
         try:
             ev = json.loads(line)
@@ -58,6 +61,9 @@ def parse(lines: list[str], server: str) -> dict:
         if kind == "system" and ev.get("subtype") == "init":
             ep["session"] = ev.get("session_id")
         elif kind == "assistant":
+            msg = ev.get("message") or {}
+            if isinstance(msg.get("usage"), dict):
+                seen[msg.get("id") or str(len(seen))] = msg["usage"]
             for b in (ev.get("message") or {}).get("content") or []:
                 if b.get("type") == "tool_use":
                     if b.get("name", "").startswith(prefix):
@@ -74,8 +80,10 @@ def parse(lines: list[str], server: str) -> dict:
             final = ev
     for call in pending.values():  # a call whose result never came back (cut off)
         ep["calls"].append(make_call(call["tool"], call["args"], "(no result)", True))
-    if not final:
+    if not final:  # timed out or crashed: charge what the stream showed (output is a lower bound)
         ep["error"] = "no result event"
+        for k, src in USAGE_KEYS:
+            ep["tokens"][k] = sum(int(u.get(src) or 0) for u in seen.values())
         return ep
     usage = final.get("modelUsage") or {}
     if usage:
@@ -84,8 +92,7 @@ def parse(lines: list[str], server: str) -> dict:
             ep["tokens"][k] = sum(int(m.get(src) or 0) for m in usage.values())
     else:
         u = final.get("usage") or {}
-        for k, src in (("input", "input_tokens"), ("cache_write", "cache_creation_input_tokens"),
-                       ("cache_read", "cache_read_input_tokens"), ("output", "output_tokens")):
+        for k, src in USAGE_KEYS:
             ep["tokens"][k] = int(u.get(src) or 0)
     ep["cost_usd"] = final.get("total_cost_usd")
     ep["turns"] = int(final.get("num_turns") or 0)

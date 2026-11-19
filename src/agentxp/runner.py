@@ -15,7 +15,7 @@ from . import judge as judging
 from . import spec as specs
 from .checks import run_checks
 from .spec import CALL_SHAPE, checks_of, fill, is_fresh
-from .surfaces.mcp import Fixture
+from .surfaces.mcp import RESULT_KEEP, Fixture
 
 RESULTS = Path.home() / "work" / "agentxp"
 
@@ -107,20 +107,45 @@ def golden_one(task: dict, fixtures: Fixtures) -> dict:
 
         calls = fx.call_steps(walk, task.get("as")) if steps else []
         outputs = [c["data"] for c in calls]
+        fill([task.get("prompt") or "", *(task.get("replies") or [])], outputs, fx.vars, strict=True)
         check_task = task if steps else {**task, "checks": []}  # no path: nothing to prove
         fails = run_checks(check_task, answer="", calls=calls, golden=outputs, vars=fx.vars,
                            read_state=lambda tool, args: fx.call(tool, args), state_env=_state_env(fx),
-                           mode="golden")
+                           mode="golden", cwd=fx.root)
         return {"task": task["id"], "passed": not fails, "failures": fails, "calls": len(calls),
                 "result_bytes": sum(c["bytes"] for c in calls), "has_path": bool(steps),
                 "errors": [c["error_code"] for c in calls if c["error"]], "outputs": outputs,
+                "warnings": sorted({f"{c['tool']} returns a text block that differs from its structuredContent; "
+                                    "chatbots may see only one of these" for c in calls if split_result(c)}),
                 "vars": fx.vars}
     except Exception as e:
-        return {"task": task["id"], "passed": False, "failures": [{"kind": "crash", "msg": repr(e)}],
-                "calls": 0, "result_bytes": 0, "has_path": False, "errors": [], "outputs": [], "vars": {}}
+        return {"task": task["id"], "passed": False, "failures": [{"kind": "crash", "msg": str(e) or repr(e)}],
+                "calls": 0, "result_bytes": 0, "has_path": False, "errors": [], "outputs": [], "warnings": [],
+                "vars": {}}
     finally:
         if own:
             fx.stop()
+
+
+def split_result(call: dict) -> bool:
+    """The text block and structuredContent both exist and say different things."""
+    data, text = call.get("structured"), call.get("text") or ""
+    if data is None or not text.strip():
+        return False
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = text
+    return data not in (parsed, {"result": parsed})
+
+
+def golden_rows(golden: dict[str, dict]) -> list[str]:
+    """golden.jsonl lines: each step's output cut to RESULT_KEEP bytes of JSON."""
+    out = []
+    for g in golden.values():
+        cut = [json.dumps(o, ensure_ascii=False, default=str)[:RESULT_KEEP] for o in g["outputs"]]
+        out.append(json.dumps({**g, "outputs": cut}, ensure_ascii=False, default=str))
+    return out
 
 
 def _state_env(fx: Fixture) -> dict:
@@ -137,11 +162,9 @@ def run_golden(spec: dict, tasks: list[dict], root: Path, log_dir: Path | None =
         fixtures.close()
 
 
-def runs_for(task: dict, base: int, weight: float, fixed: int | None) -> int:
-    """Repeats: ``--runs`` wins; else the task's ``runs``; else the default, doubled for
-    a task holding 15% or more of the weight (it decides the result)."""
-    if fixed:
-        return fixed
+def runs_for(task: dict, base: int, weight: float) -> int:
+    """Repeats: the task's ``runs``; else ``base`` (``--runs`` or ``defaults.runs``),
+    doubled for a task holding 15% or more of the weight (it decides the result)."""
     if task.get("runs"):
         return int(task["runs"])
     return base * 2 if weight >= 0.15 else base
@@ -172,7 +195,7 @@ def run_unit(task: dict, i: int, ctx: dict) -> dict:
             fails.append({"kind": "driver", "msg": ep["error"]})
         fails += run_checks(task, answer=ep["answer"], calls=ep["calls"], golden=gold["outputs"],
                             vars=fx.vars, read_state=lambda tool, args: fx.call(tool, args),
-                            state_env=_state_env(fx))
+                            state_env=_state_env(fx), cwd=fx.root)
     finally:
         if own:
             fx.stop()
@@ -194,8 +217,8 @@ def run_unit(task: dict, i: int, ctx: dict) -> dict:
         "tokens": ep["tokens"], "cost_units": metrics.cost_units(ep["tokens"]), "cost_usd": ep["cost_usd"],
         "judge_cost_usd": judge_cost, "duration_s": round(time.time() - t0, 1), "stop": ep["stop"],
         "offsurface_calls": ep["offsurface"], "answer": ep["answer"],
-        "tool_calls": [{k: c[k] for k in ("tool", "args", "error", "error_code", "bytes")} | {"result": c["text"][:2048]}
-                       for c in ep["calls"]],
+        "tool_calls": [{k: c[k] for k in ("tool", "args", "error", "error_code", "bytes")}
+                       | {"result": c["text"][:RESULT_KEEP]} for c in ep["calls"]],
     }
 
 
@@ -210,11 +233,14 @@ def run(spec: dict, args, out: Path) -> tuple[list[dict], dict, dict]:
         failed = {json.loads(line)["task"] for line in open(Path(args.rerun_failed) / "runs.jsonl")
                   if not json.loads(line)["passed"]}
         tasks = [t for t in tasks if t["id"] in failed]
+    partial = [f for f, v in (("--only", args.only), ("--family", args.family), ("--rerun-failed", args.rerun_failed))
+               if v]
     (out / "transcripts").mkdir(parents=True, exist_ok=True)
     golden = run_golden(spec, tasks, root, out)
-    with open(out / "golden.jsonl", "w") as f:
-        for g in golden.values():
-            f.write(json.dumps({k: v for k, v in g.items() if k != "outputs"}, default=str) + "\n")
+    (out / "golden.jsonl").write_text("".join(line + "\n" for line in golden_rows(golden)))
+    for g in golden.values():
+        for w in g["warnings"]:
+            print(f"golden warning {g['task']}: {w}", file=sys.stderr)
     bad = [g for g in golden.values() if not g["passed"]]
     if bad:
         for g in bad:
@@ -226,6 +252,7 @@ def run(spec: dict, args, out: Path) -> tuple[list[dict], dict, dict]:
         "server": spec["server"]["name"], "server_commit": server_commit(root), "driver": driver.name,
         "driver_version": driver.version(), "model": model,
         "judge_model": None if args.no_judge else args.judge_model, "runs": args.runs or d["runs"],
+        "partial": ", ".join(partial) or None,
         "label": args.label, "max_usd": args.max_usd, "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "argv": sys.argv[1:], "manual": [t["id"] for t in spec["tasks"] if t.get("manual")],
     }
@@ -237,7 +264,11 @@ def run(spec: dict, args, out: Path) -> tuple[list[dict], dict, dict]:
     fixtures = Fixtures(spec, root, out)
     ctx = {"fixtures": fixtures, "golden": golden, "driver": driver, "opts": opts, "out": out,
            "judge_model": meta["judge_model"]}
-    units = [(t, i) for t in tasks for i in range(runs_for(t, d["runs"], weights.get(t["id"], 0), args.runs))]
+    counts = {t["id"]: runs_for(t, args.runs or d["runs"], weights.get(t["id"], 0)) for t in tasks}
+    units = [(t, i) for t in tasks for i in range(counts[t["id"]])]
+    if args.rerun_failed:
+        print(f"--rerun-failed: {len(tasks)} tasks, {len(units)} runs "
+              f"({', '.join(f'{k} x{v}' for k, v in counts.items())})", file=sys.stderr)
     jobs = 1 if spec["server"].get("url") and any(is_fresh(t) for t in tasks) else max(1, args.jobs)
     spent = [0.0]
     lock = threading.Lock()

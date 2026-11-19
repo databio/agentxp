@@ -69,6 +69,13 @@ def cmd_golden(args) -> int:
         status = "PASS" if g["passed"] else "FAIL"
         path = f"calls={g['calls']} bytes={g['result_bytes']}" if g["has_path"] else "no golden path"
         print(f"{g['task']}: {status} {path} {'; '.join(f['msg'] for f in g['failures'])}")
+        for w in g["warnings"]:
+            print(f"{g['task']}: warning: {w}")
+    if args.out:
+        out = Path(args.out).expanduser()
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "golden.jsonl").write_text("".join(line + "\n" for line in runner.golden_rows(results)))
+        print(f"wrote {out / 'golden.jsonl'}")
     return 0 if all(g["passed"] for g in results.values()) else 1
 
 
@@ -174,13 +181,15 @@ def parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("golden", help="run each golden path with no model and check it")
     pick(g)
+    g.add_argument("--out", help="folder to write golden.jsonl into (each step's output, cut to 8 KB)")
     g.set_defaults(fn=cmd_golden)
 
     r = sub.add_parser("run", help="run the tasks through a chatbot")
     pick(r)
     r.add_argument("--driver", choices=["claude", "codex"], default="claude")
     r.add_argument("--model", help="default: claude-haiku-5-5 (claude), gpt-5.6-luna (codex)")
-    r.add_argument("--runs", type=int, help="repeats per task (overrides defaults and doubling)")
+    r.add_argument("--runs", type=int, help="repeats per task, in place of defaults.runs; a task's own runs: "
+                   "still wins, and a task with 15%% or more of the weight still gets double")
     r.add_argument("--jobs", type=int, default=4, help="parallel runs (default 4)")
     r.add_argument("--max-usd", type=float, default=5.0, help="stop starting runs past this spend (default 5)")
     r.add_argument("--max-usd-per-run", type=float, help="claude's per-run dollar cap")
@@ -189,7 +198,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     r.add_argument("--judge-model", default="claude-opus-5-5")
     r.add_argument("--no-judge", action="store_true")
-    r.add_argument("--rerun-failed", metavar="DIR", help="only tasks that failed in this results folder")
+    r.add_argument("--rerun-failed", metavar="DIR", help="only tasks that failed in this results folder, with "
+                   "the usual run counts (--runs or defaults.runs, doubled for heavy tasks); prints the count")
     r.add_argument("--label", default="")
     r.add_argument("--out", help="results folder (default ~/work/agentxp/<server>/<stamp>-...)")
     r.set_defaults(fn=cmd_run)

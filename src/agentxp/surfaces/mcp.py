@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-RESULT_KEEP = 2048  # bytes of each tool result kept in runs.jsonl and shown to the judge
+RESULT_KEEP = 8192  # characters of each tool result kept in runs.jsonl and shown to the judge
 
 
 def free_port() -> int:
@@ -53,7 +53,9 @@ def error_code(text: str) -> str | None:
 
 
 def make_call(tool: str, args: dict, text: str, is_error: bool, data: Any = None) -> dict:
-    """One tool call, the same shape for golden runs and every driver."""
+    """One tool call, the same shape for golden runs and every driver. ``structured`` is the
+    result's structuredContent when the server sent one (``data`` falls back to the text)."""
+    structured = data
     if data is None:
         try:
             data = json.loads(text)
@@ -67,6 +69,7 @@ def make_call(tool: str, args: dict, text: str, is_error: bool, data: Any = None
         "bytes": len(text.encode()),
         "text": text,
         "data": data,
+        "structured": structured,
     }
 
 
