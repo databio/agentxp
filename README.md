@@ -37,7 +37,7 @@ runs are not billed to an API key.
 In your own repo, pin a tag:
 
 ```bash
-uvx --from git+https://github.com/databio/agentxp@v0.1.0 agentxp run tests/evals/mcp_tasks.yaml --driver claude
+uvx --from git+https://github.com/databio/agentxp@v0.1.1 agentxp run tests/evals/mcp_tasks.yaml --driver claude
 ```
 
 ## Commands
