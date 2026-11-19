@@ -1,0 +1,36 @@
+# The same server over stdio: read-only tasks only (a stdio server dies with the
+# chatbot, so state checks are refused). Fixture names come from vars_cmd.
+version: 1
+surface: mcp
+
+server:
+  name: notes
+  stdio: ["{python}", notes_server.py, --stdio]
+  vars_cmd: "{python} notes_server.py --vars"
+
+defaults: {max_turns: 8, timeout_s: 180, runs: 3}
+
+families:
+  - {id: lookup, share: 1.0, source: guess, name: "Find a fact in a note"}
+
+tasks:
+  - id: freezer-contact
+    family: lookup
+    prompt: Who should I ask before moving a box in freezer B?
+    golden:
+      - {tool: get_note, args: {ref: "{{vars.freezer}}"}}
+    checks:
+      - answer_has: [Rosa]
+      - max_calls: 4
+
+  - id: empty-result
+    family: lookup
+    prompt: Do we have a note about the centrifuge?
+    # No golden path: the answer ("nothing found") is in no tool result.
+    checks:
+      - not_called: [set_status, archive_note]
+      # A phrase list for "nothing found" broke on "there doesn't appear to be";
+      # this is what a judge line is for.
+      - judge:
+          - The final answer says no note about a centrifuge was found.
+          - The final answer does not describe a centrifuge note as if it existed.
