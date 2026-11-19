@@ -318,12 +318,21 @@ the same driver, model, harness version (major.minor) and task file. Then, in or
 2. Weighted success is not lower, and no task went from mostly passing to mostly failing.
 3. Cost per successful task, as new/old, with a 90% interval from a bootstrap over runs
    (2,000 resamples):
-   - `--change cost` (the change is meant to make it cheaper): the whole interval must be
-     below 1.00, with at least 5 runs per task on both sides. (Two identical runs of the
-     example at 3 runs per task came out 3% apart with a narrow interval: 3 runs cannot
-     support a "cheaper" claim.)
-   - `--change other` (default; a feature, a fix, a new tool): new/old must be at most
-     1.05 (no more than 5% more expensive).
+   - `--change cost` (the change is meant to make it cheaper): the upper end of the
+     interval must be below **0.95**, with at least 5 runs per task on both sides.
+   - `--change other` (default; a feature, a fix, a new tool): new/old (the point
+     estimate) must be at most **1.05**. When the whole interval is above 1.00, the report
+     adds "passes, but is measurably dearer".
+
+   In one sentence: a cost change ships when the upper end of the 90% interval of new/old
+   is below 0.95; any other change ships when new/old is at most 1.05.
+
+   Why a margin: two identical runs of the example (same code, two sessions, 3 runs per
+   task) came out 3.2% apart with a tight interval (0.957 to 0.981). The bootstrap sees the
+   noise inside one session, not shifts between sessions, and more runs only make that
+   interval tighter. The 0.95 comes from that one A/A pair: run an A/A comparison on your
+   own suite a few times, and widen the margin (`COST_MARGIN`) to about twice the largest
+   shift you see. For a close call, run old and new in the same session.
 
 There are no absolute token budgets: tokens are only compared to the baseline. Commit
 `baseline.json` (copy `summary.json` from a run of the released version), so its diff shows

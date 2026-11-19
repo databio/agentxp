@@ -46,9 +46,21 @@ OLD = {"a": [(True, 1000 + i) for i in range(5)], "b": [(True, 2000 - i) for i i
 def test_cost_change_must_beat_the_old():
     cheaper = {"a": [(True, 700 + i) for i in range(5)], "b": [(True, 1400 - i) for i in range(5)]}
     res = metrics.compare(summary(OLD), summary(cheaper), change="cost")
-    assert res["ship"] and res["interval"][1] < 1.0 and res["ratio"] == pytest.approx(0.7, abs=0.01)
+    assert res["ship"] and res["interval"][1] < 0.95 and res["ratio"] == pytest.approx(0.7, abs=0.01)
     same = metrics.compare(summary(OLD), summary(OLD), change="cost")
     assert not same["ship"]  # equal is not a win
+
+
+def test_cost_win_needs_the_margin():
+    small = {k: [(p, c * 0.97) for p, c in v] for k, v in OLD.items()}  # 3% cheaper, no noise
+    res = metrics.compare(summary(OLD), summary(small), change="cost")
+    assert res["interval"][1] < 1.0 and not res["ship"]
+
+
+def test_dearer_but_passing_is_noted():
+    up3 = {k: [(p, c * 1.03) for p, c in v] for k, v in OLD.items()}
+    res = metrics.compare(summary(OLD), summary(up3))
+    assert res["ship"] and res["notes"]
 
 
 def test_cost_win_needs_five_runs():

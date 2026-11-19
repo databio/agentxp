@@ -102,6 +102,7 @@ def render_compare(old: dict, new: dict, res: dict) -> str:
         f"- Weighted success: {res['weighted_success']['old']:.3f} -> {res['weighted_success']['new']:.3f}",
     ]
     out += [f"- {r}" for r in res["reasons"]]
+    out += [f"- Note: {n}" for n in res.get("notes", [])]
     if res["missing"]:
         out.append(f"- Only on one side (ignored): {', '.join(res['missing'])}")
     out += ["", "| task | old success | new success | old cost/success | new cost/success |",

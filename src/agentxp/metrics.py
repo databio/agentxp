@@ -13,7 +13,11 @@ from __future__ import annotations
 import math
 import random
 
-MIN_SHIP_RUNS = 5  # an A/A run (same code twice) at 3 runs per task "won" by 3%
+MIN_SHIP_RUNS = 5  # a floor on interval quality for cost claims
+#: A cost claim must beat this. An A/A run (same code twice, two sessions) came out 3.2%
+#: apart with a tight interval: the bootstrap sees within-session noise only, so the
+#: margin covers between-session shifts. Widen it to ~2x the largest A/A shift you see.
+COST_MARGIN = 0.95
 COST_WEIGHTS = {"input": 1.0, "cache_write": 1.25, "cache_read": 0.1, "output": 5.0}
 
 
@@ -129,18 +133,21 @@ def compare(old: dict, new: dict, change: str = "other", outcome_only: bool = Fa
 
     point, lo, hi = bootstrap_ratio(old, new, weighted, key, resamples, seed)
     if change == "cost":
-        cost_ok = hi < 1.0
-        rule = "cost change: the 90% interval of new/old must be below 1.00"
+        cost_ok = hi < COST_MARGIN
+        rule = f"cost change: the upper end of the 90% interval of new/old must be below {COST_MARGIN:.2f}"
         few = [t for t in weighted if min(len(old["tasks"][t]["runs"]), len(new["tasks"][t]["runs"])) < MIN_SHIP_RUNS]
         if few:
             reasons.append(f"too few runs to claim a cost win (need {MIN_SHIP_RUNS} per task): {', '.join(few)}")
     else:
         cost_ok = point <= 1.05
         rule = "other change: new/old must be at most 1.05"
+    notes = []
+    if cost_ok and lo > 1.0:
+        notes.append("passes, but is measurably dearer (the whole interval is above 1.00)")
     if not cost_ok:
         reasons.append(f"cost per success new/old = {point:.3f} (90% {lo:.3f}-{hi:.3f}); {rule}")
     return {
-        "ship": not reasons, "reasons": reasons, "rule": rule, "ratio": point, "interval": [lo, hi],
+        "ship": not reasons, "reasons": reasons, "notes": notes, "rule": rule, "ratio": point, "interval": [lo, hi],
         "weighted_success": {"old": round(ws_old, 3), "new": round(ws_new, 3)},
         "tasks": {t: {"old_rate": rate(old, t), "new_rate": rate(new, t),
                       "old_cps": task_cps(old["tasks"][t]["runs"], key),
